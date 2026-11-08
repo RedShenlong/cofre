@@ -1,0 +1,36 @@
+[Unit]
+Description=Cofre - comparte archivos entre tus dispositivos (FIDO2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/cofre serve
+Restart=on-failure
+RestartSec=5
+
+# Bajo consumo: prioridad baja de CPU y disco.
+Nice=10
+CPUWeight=20
+IOWeight=20
+MemoryMax=512M
+
+# Aislamiento: solo puede escribir en su carpeta de datos y en su socket.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/cofre %t
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+UMask=0077
+
+[Install]
+WantedBy=default.target

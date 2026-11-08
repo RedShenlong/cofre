@@ -1,0 +1,14 @@
+# Binario compilado
+/cofre
+/dist/
+
+# Datos locales (nunca deben subirse: contienen claves)
+*.key
+*.enc
+master.key
+
+# Editores / sistema
+.idea/
+.vscode/
+*.swp
+.DS_Store

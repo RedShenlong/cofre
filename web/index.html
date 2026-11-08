@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Cofre</title>
+  <meta name="theme-color" content="#4f46e5">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Cofre">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <!-- Cargando -->
+  <section id="screen-boot" class="screen center">
+    <div class="spinner" aria-label="Cargando"></div>
+  </section>
+
+  <!-- Iniciar sesión -->
+  <section id="screen-login" class="screen center" hidden>
+    <div class="auth-card">
+      <img src="/icon.svg" alt="" class="auth-logo">
+      <h1>Cofre</h1>
+      <p class="muted">Tus archivos y textos, solo para tus dispositivos.</p>
+      <button id="btn-login" class="btn primary big">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14a4 4 0 1 1 3.87-5H21v4h-2v2h-3v-2h-5.13A4 4 0 0 1 7 14Zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+        Entrar con mi llave
+      </button>
+      <p class="hint">Conecta la llave o acércala por NFC cuando te lo pida.</p>
+      <p id="login-error" class="error" role="alert"></p>
+    </div>
+  </section>
+
+  <!-- Primera vez: registrar la llave -->
+  <section id="screen-enroll" class="screen center" hidden>
+    <form id="form-enroll" class="auth-card">
+      <img src="/icon.svg" alt="" class="auth-logo">
+      <h1>Bienvenido a tu Cofre</h1>
+      <p class="muted">Registra tu llave de seguridad. Solo se hace una vez.</p>
+      <label class="field">
+        <span>Código de alta</span>
+        <input id="enroll-code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" required>
+        <small>Aparece al arrancar el servidor, o genera uno en el portátil con <code>cofre codigo</code>.</small>
+      </label>
+      <label class="field">
+        <span>Nombre de la llave</span>
+        <input id="enroll-name" value="Titan" maxlength="40">
+      </label>
+      <button class="btn primary big" type="submit">Registrar llave</button>
+      <p id="enroll-error" class="error" role="alert"></p>
+    </form>
+  </section>
+
+  <!-- App -->
+  <section id="screen-main" class="screen" hidden>
+    <header class="topbar">
+      <div class="brand">
+        <img src="/icon.svg" alt="">
+        <span>Cofre</span>
+        <span id="live" class="live" title="Conectado en tiempo real"></span>
+      </div>
+      <button id="btn-settings" class="icon-btn" aria-label="Ajustes">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4l-.4 2.5a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1a7.4 7.4 0 0 0 1.7 1l.4 2.5h4l.4-2.5a7.4 7.4 0 0 0 1.7-1l2.4 1 2-3.4-2-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg>
+      </button>
+    </header>
+
+    <main class="container">
+      <div class="composer" id="composer">
+        <textarea id="text" rows="2" placeholder="Escribe o pega un texto…"></textarea>
+        <div class="composer-actions">
+          <label class="btn ghost" for="file-input">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M16.5 6.5v10a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6.5H9v9a3 3 0 0 0 6 0V5a4.5 4.5 0 0 0-9 0v11.5a6 6 0 0 0 12 0v-10h-1.5Z"/></svg>
+            Archivos
+          </label>
+          <input id="file-input" type="file" multiple hidden>
+          <span class="drop-hint">o arrástralos aquí</span>
+          <button id="btn-send" class="btn primary" disabled>Enviar</button>
+        </div>
+      </div>
+
+      <div id="uploads"></div>
+
+      <nav class="chips" id="filters">
+        <button class="chip active" data-f="all">Todo</button>
+        <button class="chip" data-f="file">Archivos</button>
+        <button class="chip" data-f="text">Textos</button>
+        <button class="chip" data-f="pinned">Fijados</button>
+      </nav>
+
+      <ul id="feed" class="feed"></ul>
+      <div id="empty" class="empty" hidden>
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7Zm1-3h14l1 3H4l1-3Zm5 7v2h4v-2h-4Z"/></svg>
+        <p>Tu cofre está vacío.<br>Sube algo y aparecerá en todos tus dispositivos.</p>
+      </div>
+    </main>
+
+    <div id="dropzone" class="dropzone" hidden><div>Suelta para subir</div></div>
+  </section>
+
+  <!-- Ajustes -->
+  <dialog id="dlg-settings" class="sheet">
+    <div class="sheet-head">
+      <h2 tabindex="-1" autofocus>Ajustes</h2>
+      <button class="icon-btn" data-close aria-label="Cerrar">✕</button>
+    </div>
+    <div class="sheet-body">
+      <h3>Dispositivos con sesión</h3>
+      <ul id="sessions" class="rows"></ul>
+
+      <h3>Llaves de seguridad</h3>
+      <ul id="keys" class="rows"></ul>
+      <form id="form-addkey" class="inline-form">
+        <input id="addkey-name" placeholder="Nombre (p. ej. Titan de repuesto)" maxlength="40">
+        <button class="btn ghost" type="submit">Añadir llave</button>
+      </form>
+      <p class="hint">Te recomiendo registrar una segunda llave de repuesto por si pierdes la primera.</p>
+
+      <h3>Preferencias</h3>
+      <label class="setting">
+        <span>Borrar automáticamente lo que tenga más de</span>
+        <select id="set-retention">
+          <option value="1">1 día</option><option value="3">3 días</option><option value="7">7 días</option>
+          <option value="14">14 días</option><option value="30">30 días</option><option value="90">90 días</option>
+          <option value="0">Nunca</option>
+        </select>
+      </label>
+      <p class="hint">Lo fijado nunca se borra solo.</p>
+      <label class="setting">
+        <span>Pedir la llave de nuevo cada</span>
+        <select id="set-session">
+          <option value="1">1 día</option><option value="7">7 días</option><option value="14">14 días</option>
+          <option value="30">30 días</option><option value="90">90 días</option>
+        </select>
+      </label>
+
+      <label class="setting switch">
+        <span>Copiar solo lo que llegue a <b>este dispositivo</b><small>Si el navegador no lo permite (iPhone), te saldrá un aviso para copiarlo con un toque.</small></span>
+        <input type="checkbox" id="set-autocopy">
+      </label>
+      <label class="setting switch">
+        <span>Copiar en el portapapeles del <b>portátil</b><small>Textos e imágenes enviados desde otros dispositivos, con notificación.</small></span>
+        <input type="checkbox" id="set-laptopclip">
+      </label>
+
+      <h3>Zona peligrosa</h3>
+      <div class="danger-row">
+        <button id="btn-clear" class="btn danger-ghost">Vaciar el cofre (menos lo fijado)</button>
+        <button id="btn-logout" class="btn ghost">Cerrar sesión aquí</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- Ver texto completo -->
+  <dialog id="dlg-text" class="sheet">
+    <div class="sheet-head">
+      <h2 tabindex="-1" autofocus>Texto</h2>
+      <button class="icon-btn" data-close aria-label="Cerrar">✕</button>
+    </div>
+    <div class="sheet-body">
+      <pre id="text-full" class="text-full"></pre>
+      <button id="btn-copy-full" class="btn primary">Copiar</button>
+    </div>
+  </dialog>
+
+  <div id="clipbar" class="clipbar" hidden role="status">
+    <div class="clipbar-text">
+      <strong id="clipbar-title"></strong>
+      <span id="clipbar-preview"></span>
+    </div>
+    <button id="clipbar-copy" class="btn primary">Copiar</button>
+    <button id="clipbar-close" class="icon-btn" aria-label="Cerrar">✕</button>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+</body>
+</html>
