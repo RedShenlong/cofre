@@ -338,6 +338,59 @@ function enterMain() {
   firstLoad = true;
   loadItems();
   connectEvents();
+  uploadShared();
+}
+
+/* ============ Compartir desde otras apps (Android) ============ */
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/sw.js').catch(() => {});
+}
+
+// Mensajes de la vuelta desde el menú "Compartir".
+const sharedFlag = new URLSearchParams(location.search).get('compartido');
+if (sharedFlag) history.replaceState(null, '', '/' + location.hash);
+
+let sharing = false;
+async function uploadShared() {
+  if (sharedFlag === 'sesion') toast('Entra con tu llave y vuelve a compartir', true);
+  if (sharedFlag === 'error') toast('No se pudo recibir lo compartido', true);
+  if (sharing || !('caches' in window)) return;
+  sharing = true;
+  try {
+    const cache = await caches.open('cofre-compartido');
+    const keys = await cache.keys();
+    if (!keys.length) {
+      if (sharedFlag === '1') toast('Recibido ✓');
+      return;
+    }
+    const files = [];
+    for (const req of keys) {
+      const res = await cache.match(req);
+      if (res.headers.get('X-Texto')) {
+        const text = await res.text();
+        try {
+          await api('POST', '/api/text', { text });
+          toast('Texto compartido ✓');
+        } catch (e) {
+          if (e instanceof AuthError) return; // se reintenta tras entrar con la llave
+          toast(e.message, true);
+        }
+        await cache.delete(req);
+      } else {
+        const blob = await res.blob();
+        const name = decodeURIComponent(res.headers.get('X-Nombre') || 'archivo');
+        files.push({ req, file: new File([blob], name, { type: blob.type }) });
+      }
+    }
+    if (files.length && await uploadFiles(files.map((f) => f.file))) {
+      await Promise.all(files.map((f) => cache.delete(f.req)));
+    }
+  } catch (e) {
+    toast('No se pudo subir lo compartido: ' + (e.message || e), true);
+  } finally {
+    sharing = false;
+  }
 }
 
 async function loadItems() {
@@ -496,10 +549,16 @@ $('#file-input').addEventListener('change', (e) => {
   e.target.value = '';
 });
 
+// Devuelve una promesa que se resuelve a true si la subida fue bien.
 function uploadFiles(files) {
+  return new Promise((resolve) => uploadFilesCb(files, resolve));
+}
+
+function uploadFilesCb(files, done) {
   const total = files.reduce((a, f) => a + f.size, 0);
   if (total > maxUpload) {
-    toast(`Demasiado grande (${humanSize(total)}). El máximo desde el navegador es ${humanSize(maxUpload)}; desde el portátil usa "cofre enviar".`, true);
+    toast(`Demasiado grande (${humanSize(total)}). El máximo desde el navegador es ${humanSize(maxUpload)}; desde el ordenador usa "cofre enviar".`, true);
+    done(false);
     return;
   }
   const label = files.length === 1 ? files[0].name : `${files.length} archivos`;
@@ -522,6 +581,7 @@ function uploadFiles(files) {
   };
   xhr.onload = () => {
     row.remove();
+    done(xhr.status === 200);
     if (xhr.status === 200) toast(files.length === 1 ? 'Subido ✓' : `${files.length} archivos subidos ✓`);
     else if (xhr.status === 401) showScreen('login');
     else {
@@ -530,7 +590,7 @@ function uploadFiles(files) {
       toast(msg, true);
     }
   };
-  xhr.onerror = () => { row.remove(); toast('Se perdió la conexión durante la subida', true); };
+  xhr.onerror = () => { row.remove(); done(false); toast('Se perdió la conexión durante la subida', true); };
   xhr.send(fd);
 }
 

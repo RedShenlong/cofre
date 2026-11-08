@@ -19,6 +19,8 @@ func TestLaptopClipboardLive(t *testing.T) {
 		c.Stdin = strings.NewReader(string(prev))
 		c.Run()
 	}()
+	desktopIntegration = true
+	defer func() { desktopIntegration = false }()
 	keys := testKeys(t)
 	st, _ := openStore(t.TempDir(), keys)
 	s, _ := newServer(st, keys, tHost, 8443, tlsPaths{}, 1<<20)

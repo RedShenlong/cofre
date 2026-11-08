@@ -12,6 +12,12 @@ import (
 	"testing"
 )
 
+// Las pruebas nunca deben tocar el portapapeles ni mostrar notificaciones reales.
+func TestMain(m *testing.M) {
+	desktopIntegration = false
+	os.Exit(m.Run())
+}
+
 func testKeys(t *testing.T) *Keyring {
 	k, err := loadOrCreateMasterKey(filepath.Join(t.TempDir(), "master.key"))
 	if err != nil {

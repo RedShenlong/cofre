@@ -37,8 +37,10 @@ func loadOrCreateMasterKey(path string) (*Keyring, error) {
 		if len(b) != 32 {
 			return nil, fmt.Errorf("%s no tiene 32 bytes", path)
 		}
-		if st, err := os.Stat(path); err == nil && st.Mode().Perm()&0o077 != 0 {
-			return nil, fmt.Errorf("%s tiene permisos demasiado abiertos (%v); usa chmod 600", path, st.Mode().Perm())
+		if st, err := os.Stat(path); err == nil {
+			if err := checkKeyPerms(path, st.Mode()); err != nil {
+				return nil, err
+			}
 		}
 		return &Keyring{master: b}, nil
 	}

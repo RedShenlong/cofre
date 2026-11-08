@@ -28,7 +28,7 @@ type Item struct {
 	From    string    `json:"from"`
 	Created time.Time `json:"created"`
 	Pinned  bool      `json:"pinned"`
-	Session string    `json:"session,omitempty"` // sesión que lo subió ("" = terminal del portátil)
+	Session string    `json:"session,omitempty"` // sesión que lo subió ("" = terminal del ordenador)
 }
 
 type StoredCred struct {
@@ -51,7 +51,7 @@ type Session struct {
 type Settings struct {
 	RetentionDays int  `json:"retentionDays"` // 0 = nunca borrar
 	SessionDays   int  `json:"sessionDays"`
-	ClipboardOff  bool `json:"clipboardOff"` // no copiar al portapapeles del portátil
+	ClipboardOff  bool `json:"clipboardOff"` // no copiar al portapapeles del ordenador
 }
 
 type State struct {

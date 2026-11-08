@@ -45,7 +45,7 @@ ${green}${bold}✓ Cofre instalado y en marcha${reset} → https://${HOST}:8443
 
   ${dim}# siguientes pasos${reset}
   cofre ca                       certificado para tus dispositivos
-  cofre codigo                   código para registrar tu llave
+  cofre registrar                registrar tu llave (desde este ordenador)
   cofre enviar archivo.pdf       enviar algo
   journalctl --user -u cofre -f  ver el log
 

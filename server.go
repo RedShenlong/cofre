@@ -20,10 +20,10 @@ import (
 	"net/http"
 	"net/netip"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -50,7 +50,7 @@ type ceremony struct {
 }
 
 // regToken es el secreto de un solo uso que genera "cofre registrar".
-// Solo se guarda su hash y solo vale desde el propio portátil.
+// Solo se guarda su hash y solo vale desde el propio ordenador.
 type regToken struct {
 	hash    [32]byte
 	expires time.Time
@@ -115,9 +115,11 @@ func (s *Server) browserHandler() http.Handler {
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(b)
 	})
-	for _, f := range []string{"/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg"} {
+	for _, f := range []string{"/app.js", "/app.css", "/manifest.webmanifest", "/icon.svg", "/sw.js"} {
 		mux.Handle("GET "+f, noCache(files))
 	}
+	// Respaldo del menú "Compartir" de Android por si el service worker aún no está activo.
+	mux.HandleFunc("POST /compartir", s.shareTarget)
 	for _, n := range []int{180, 192, 512} {
 		mux.HandleFunc(fmt.Sprintf("GET /icon-%d.png", n), func(w http.ResponseWriter, r *http.Request) { serveIcon(w, n) })
 	}
@@ -147,7 +149,7 @@ func (s *Server) browserHandler() http.Handler {
 	return s.secure(mux)
 }
 
-// Handler del socket Unix local (solo accesible por tu usuario del portátil).
+// Handler del socket Unix local (solo accesible por tu usuario del ordenador).
 func (s *Server) localHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /local/register", func(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +165,7 @@ func (s *Server) localHandler() http.Handler {
 			st.Sessions = nil
 			return nil
 		})
-		log.Printf("llaves reiniciadas desde el portátil: %d llaves y todas las sesiones borradas", n)
+		log.Printf("llaves reiniciadas desde el ordenador: %d llaves y todas las sesiones borradas", n)
 		s.hub.publish("account")
 		writeJSON(w, map[string]int{"keys": n})
 	})
@@ -182,7 +184,7 @@ func (s *Server) localHandler() http.Handler {
 			httpErr(w, 400, "texto vacío o demasiado largo")
 			return
 		}
-		it, err := s.store.AddText(string(b), "Portátil (terminal)", "")
+		it, err := s.store.AddText(string(b), "Ordenador (terminal)", "")
 		if err != nil {
 			httpErr(w, 500, err.Error())
 			return
@@ -197,7 +199,7 @@ func (s *Server) localHandler() http.Handler {
 		}
 		name := cleanName(r.URL.Query().Get("name"))
 		br := bufio.NewReaderSize(r.Body, 4096)
-		it, err := s.store.AddFile(name, detectMime(name, br), "Portátil (terminal)", "", br)
+		it, err := s.store.AddFile(name, detectMime(name, br), "Ordenador (terminal)", "", br)
 		if err != nil {
 			httpErr(w, 500, err.Error())
 			return
@@ -243,7 +245,9 @@ func (s *Server) secure(next http.Handler) http.Handler {
 			return
 		}
 		// Protección CSRF: toda petición que modifica algo debe venir de nuestra propia página.
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// Excepción: /compartir lo envía el propio Android (menú Compartir) sin cabecera Origin;
+		// ahí la protección la da la cookie SameSite=Strict, que nunca viaja desde otra web.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.URL.Path != "/compartir" {
 			if r.Header.Get("Origin") != s.origin {
 				httpErr(w, http.StatusForbidden, "origen no permitido")
 				return
@@ -361,7 +365,7 @@ func deviceName(ua string, touch bool) string {
 		// Las tablets Android (p. ej. Samsung) usan por defecto el modo escritorio.
 		dev = "Tablet Android"
 	case strings.Contains(ua, "Linux"):
-		dev = "Portátil Linux"
+		dev = "Ordenador Linux"
 	}
 	br := ""
 	switch {
@@ -465,7 +469,7 @@ func (s *Server) takeRegisterToken(tok string) bool {
 	return true
 }
 
-// fromThisMachine indica si la petición viene del propio portátil
+// fromThisMachine indica si la petición viene del propio ordenador
 // (loopback o una de sus propias IPs). Defensa adicional para el alta.
 func fromThisMachine(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
@@ -473,7 +477,7 @@ func fromThisMachine(r *http.Request) bool {
 		return false
 	}
 	// netip entiende las IPv6 con zona (fe80::1%wlan0), que es lo que usa
-	// el propio portátil al resolver su nombre .local por mDNS.
+	// el propio ordenador al resolver su nombre .local por mDNS.
 	ip, err := netip.ParseAddr(host)
 	if err != nil {
 		return false
@@ -484,7 +488,7 @@ func fromThisMachine(r *http.Request) bool {
 	}
 	addrs, err := net.InterfaceAddrs()
 	if err != nil {
-		log.Printf("no se pudieron leer las IPs del portátil: %v", err)
+		log.Printf("no se pudieron leer las IPs del ordenador: %v", err)
 	}
 	for _, a := range addrs {
 		if n, ok := a.(*net.IPNet); ok {
@@ -493,7 +497,7 @@ func fromThisMachine(r *http.Request) bool {
 			}
 		}
 	}
-	log.Printf("registro rechazado: viene de %s, que no es este portátil", host)
+	log.Printf("registro rechazado: viene de %s, que no es este ordenador", host)
 	return false
 }
 
@@ -512,11 +516,11 @@ func (s *Server) enrollBegin(w http.ResponseWriter, r *http.Request) {
 	byToken := false
 	if !authed {
 		if !fromThisMachine(r) {
-			httpErr(w, 403, "las llaves solo se pueden registrar desde el propio portátil")
+			httpErr(w, 403, "las llaves solo se pueden registrar desde el propio ordenador donde está Cofre")
 			return
 		}
 		if !s.takeRegisterToken(req.Token) {
-			httpErr(w, 403, "enlace de registro no válido o caducado. Genera otro en el portátil con: cofre registrar")
+			httpErr(w, 403, "enlace de registro no válido o caducado. Genera otro en el ordenador con: cofre registrar")
 			return
 		}
 		byToken = true
@@ -714,21 +718,20 @@ func (s *Server) checkSpace(n int64) error {
 	if n <= 0 {
 		return nil
 	}
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(s.store.dir, &st); err != nil {
+	free, err := freeSpace(s.store.dir)
+	if err != nil {
 		return nil
 	}
-	free := int64(st.Bavail) * int64(st.Bsize)
 	need := encryptedSize(n) + n/50 + 1<<30
 	if free < need {
-		return fmt.Errorf("no hay espacio en el portátil: hay %s libres y hacen falta %s", humanSize(free), humanSize(need))
+		return fmt.Errorf("no hay espacio en el ordenador: hay %s libres y hacen falta %s", humanSize(free), humanSize(need))
 	}
 	return nil
 }
 
 func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > s.maxUpload {
-		httpErr(w, 413, fmt.Sprintf("demasiado grande para subir desde el navegador (máx. %s). Desde el portátil usa: cofre enviar", humanSize(s.maxUpload)))
+		httpErr(w, 413, fmt.Sprintf("demasiado grande para subir desde el navegador (máx. %s). Desde el ordenador usa: cofre enviar", humanSize(s.maxUpload)))
 		return
 	}
 	if err := s.checkSpace(r.ContentLength); err != nil {
@@ -779,6 +782,51 @@ func (s *Server) upload(w http.ResponseWriter, r *http.Request) {
 		go s.toLaptopClipboard(*it)
 	}
 	writeJSON(w, map[string]any{"added": added})
+}
+
+// shareTarget recibe lo compartido desde otra app de Android cuando el service worker
+// todavía no está activo. Solo funciona con sesión (cookie SameSite=Strict).
+func (s *Server) shareTarget(w http.ResponseWriter, r *http.Request) {
+	se, ok := s.currentSession(r)
+	if !ok {
+		http.Redirect(w, r, "/?compartido=sesion", http.StatusSeeOther)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.maxUpload)
+	mr, err := r.MultipartReader()
+	if err != nil {
+		http.Redirect(w, r, "/?compartido=error", http.StatusSeeOther)
+		return
+	}
+	var texts []string
+	files := 0
+	for {
+		part, err := mr.NextPart()
+		if err != nil {
+			break
+		}
+		switch {
+		case part.FormName() == "file" && part.FileName() != "":
+			name := cleanName(part.FileName())
+			br := bufio.NewReaderSize(part, 4096)
+			if it, err := s.store.AddFile(name, detectMime(name, br), se.Device, se.ID, br); err == nil && it.Size > 0 {
+				files++
+			} else if err == nil {
+				s.store.Delete(it.ID) // parte vacía
+			}
+		case part.FormName() == "title" || part.FormName() == "text" || part.FormName() == "url":
+			b, _ := io.ReadAll(io.LimitReader(part, maxTextBytes))
+			if t := strings.TrimSpace(string(b)); t != "" && !slices.Contains(texts, t) {
+				texts = append(texts, t)
+			}
+		}
+		part.Close()
+	}
+	if files == 0 && len(texts) > 0 {
+		s.store.AddText(strings.Join(texts, "\n"), se.Device, se.ID)
+	}
+	s.hub.publish("items")
+	http.Redirect(w, r, "/?compartido=1", http.StatusSeeOther)
 }
 
 // Tipos que el navegador puede mostrar sin riesgo de ejecutar código en nuestra página.

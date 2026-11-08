@@ -94,7 +94,7 @@ type tClient struct {
 	t       *testing.T
 	h       http.Handler
 	cookies map[string]string
-	remote  string // IP de origen ("" = el propio portátil)
+	remote  string // IP de origen ("" = el propio ordenador)
 }
 
 func (c *tClient) do(method, path string, body io.Reader, ctype string) (int, []byte, http.Header) {
@@ -154,13 +154,13 @@ func TestFullFlowWithSoftKey(t *testing.T) {
 	key := newSoftKey()
 
 	// Alta con código
-	// Alguien en la wifi con un token válido (p. ej. robado) NO puede registrar: no es el portátil.
+	// Alguien en la wifi con un token válido (p. ej. robado) NO puede registrar: no es el ordenador.
 	stolen, _ := s.newRegisterToken()
 	lan := &tClient{t: t, h: h, cookies: map[string]string{}, remote: "192.0.2.50"}
 	if code, _ := lan.json("POST", "/api/enroll/begin", map[string]string{"token": stolen, "name": "intruso"}); code != 403 {
 		t.Fatalf("registro desde otra IP debería fallar, fue %d", code)
 	}
-	// Desde el propio portátil, con el enlace de "cofre registrar"
+	// Desde el propio ordenador, con el enlace de "cofre registrar"
 	reg, _ := s.newRegisterToken()
 	if code, _ := c.json("POST", "/api/enroll/begin", map[string]string{"token": "inventado", "name": "x"}); code != 403 {
 		t.Fatal("token inventado aceptado")
@@ -281,6 +281,41 @@ func TestFullFlowWithSoftKey(t *testing.T) {
 	}
 	if code, _ := other.json("GET", "/api/items", nil); code != 401 {
 		t.Fatal("la sesión revocada sigue funcionando")
+	}
+
+	// Menú "Compartir" de Android (respaldo sin service worker): sin cabecera Origin.
+	share := func(cookie string, fields map[string]string, fileName string, data []byte) (int, string) {
+		var b bytes.Buffer
+		w := multipart.NewWriter(&b)
+		for k, v := range fields {
+			w.WriteField(k, v)
+		}
+		if fileName != "" {
+			fw, _ := w.CreateFormFile("file", fileName)
+			fw.Write(data)
+		}
+		w.Close()
+		req := httptest.NewRequest("POST", "https://"+tHost+":8443/compartir", &b)
+		req.Host = tHost + ":8443"
+		req.Header.Set("Content-Type", w.FormDataContentType())
+		if cookie != "" {
+			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: cookie})
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code, rec.Header().Get("Location")
+	}
+	count := func() int { return len(st.Items()) }
+	n0 := count()
+	if code, loc := share(c.cookies[sessionCookie], nil, "foto galeria.jpg", []byte("\xff\xd8\xff jpeg")); code != 303 || loc != "/?compartido=1" || count() != n0+1 {
+		t.Fatalf("compartir foto: %d %s (%d→%d)", code, loc, n0, count())
+	}
+	if code, _ := share(c.cookies[sessionCookie], map[string]string{"title": "Artículo", "url": "https://ejemplo.org/x"}, "", nil); code != 303 || count() != n0+2 {
+		t.Fatal("compartir enlace/texto")
+	}
+	// Sin sesión (o desde otra web, que nunca lleva la cookie SameSite=Strict): no se guarda nada.
+	if code, loc := share("", nil, "malo.exe", []byte("x")); code != 303 || loc != "/?compartido=sesion" || count() != n0+2 {
+		t.Fatalf("compartir sin sesión debería rechazarse: %d %s", code, loc)
 	}
 
 	// Añadir una segunda llave estando dentro (sin código)

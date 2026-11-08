@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -28,7 +27,7 @@ Uso:
   cofre enviar ARCHIVO...     Sube uno o varios archivos al cofre.
   cofre enviar -t "texto"     Sube un texto.
   cofre enviar -              Sube lo que llegue por la entrada estándar como texto.
-  cofre registrar             Registra tu llave (abre el navegador del portátil).
+  cofre registrar             Registra tu llave (abre el navegador del ordenador).
   cofre reiniciar-llaves      Borra todas las llaves y sesiones (si pierdes tu llave).
   cofre ca                    Muestra el certificado a instalar en tus dispositivos.
   cofre estado                Muestra el estado del servidor.
@@ -72,24 +71,8 @@ func main() {
 	}
 }
 
-func defaultDataDir() string {
-	if d := os.Getenv("XDG_DATA_HOME"); d != "" {
-		return filepath.Join(d, "cofre")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "cofre")
-}
-
-func socketPath() string {
-	if d := os.Getenv("XDG_RUNTIME_DIR"); d != "" {
-		return filepath.Join(d, "cofre.sock")
-	}
-	return filepath.Join(defaultDataDir(), "cofre.sock")
-}
-
 func defaultHost() string {
-	h, _ := os.Hostname()
-	h = strings.ToLower(strings.Split(h, ".")[0])
+	h := strings.ToLower(localHostname())
 	if h == "" {
 		h = "cofre"
 	}
@@ -100,15 +83,17 @@ var (
 	fData, fHost, fAddr *string
 	fPort               *int
 	fMaxMB              *int64
+	fLog                *string
 )
 
 func serveFlags() *flag.FlagSet {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	fData = fs.String("data", defaultDataDir(), "carpeta de datos (cifrados)")
-	fHost = fs.String("host", defaultHost(), "nombre con el que tus dispositivos encuentran el portátil (mDNS)")
+	fHost = fs.String("host", defaultHost(), "nombre con el que tus dispositivos encuentran el ordenador (mDNS)")
 	fAddr = fs.String("addr", "", "IP en la que escuchar (vacío = todas)")
 	fPort = fs.Int("port", 8443, "puerto HTTPS")
 	fMaxMB = fs.Int64("max-mb", 16384, "tamaño máximo de subida desde el navegador en MB")
+	fLog = fs.String("log", "", "escribir el registro en este archivo (por defecto, salida de error)")
 	return fs
 }
 
@@ -116,6 +101,17 @@ func serve(args []string) error {
 	fs := serveFlags()
 	fs.Parse(args)
 	host := strings.ToLower(*fHost)
+	if *fLog != "" {
+		os.MkdirAll(filepath.Dir(*fLog), 0o700)
+		if st, err := os.Stat(*fLog); err == nil && st.Size() > 5<<20 {
+			os.Rename(*fLog, *fLog+".old") // rotación sencilla
+		}
+		f, err := os.OpenFile(*fLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+		if err != nil {
+			return err
+		}
+		log.SetOutput(f)
+	}
 	if err := os.MkdirAll(*fData, 0o700); err != nil {
 		return err
 	}
@@ -161,9 +157,7 @@ func serve(args []string) error {
 	// Socket local para el comando "cofre enviar" (solo tu usuario puede usarlo).
 	sock := socketPath()
 	os.Remove(sock)
-	oldMask := syscall.Umask(0o177)
-	ul, err := net.Listen("unix", sock)
-	syscall.Umask(oldMask)
+	ul, err := listenLocal(sock)
 	if err != nil {
 		return fmt.Errorf("socket local: %w", err)
 	}
@@ -182,7 +176,7 @@ func serve(args []string) error {
 	}()
 
 	if !store.HasCreds() {
-		log.Printf("Aún no hay llaves registradas. En el portátil ejecuta: cofre registrar")
+		log.Printf("Aún no hay llaves registradas. En el ordenador ejecuta: cofre registrar")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -221,7 +215,7 @@ func localDo(method, path string, body io.Reader, out any) error {
 	req, _ := http.NewRequest(method, "http://cofre"+path, body)
 	resp, err := localClient().Do(req)
 	if err != nil {
-		return errors.New("no se pudo conectar con el servidor. ¿Está en marcha? (systemctl --user status cofre)")
+		return errors.New("no se pudo conectar con el servidor. ¿Está en marcha? (" + serviceHint + ")")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -289,7 +283,7 @@ func localUpload(name string, r io.Reader, size int64, idx, count int) error {
 		if pr.done.Load() > 0 {
 			err = fmt.Errorf("la subida se cortó tras %s: %v", humanSize(pr.done.Load()), err)
 		} else {
-			err = errors.New("no se pudo conectar con el servidor. ¿Está en marcha? (systemctl --user status cofre)")
+			err = errors.New("no se pudo conectar con el servidor. ¿Está en marcha? (" + serviceHint + ")")
 		}
 		pr.finish(err)
 		return err
@@ -315,8 +309,8 @@ func cmdRegister() error {
 	fmt.Println("🔑 Abriendo el navegador para registrar tu llave…")
 	fmt.Println("   Escribe un nombre, pulsa \"Registrar llave\" y toca tu llave.")
 	fmt.Printf("   El enlace vale una sola vez y caduca a las %s.\n", out.Expires.Format("15:04"))
-	if exec.Command("xdg-open", out.URL).Start() != nil {
-		fmt.Println("\n   No se pudo abrir el navegador. Abre este enlace EN ESTE PORTÁTIL:")
+	if openURL(out.URL) != nil {
+		fmt.Println("\n   No se pudo abrir el navegador. Abre este enlace EN ESTE ORDENADOR:")
 		fmt.Println("  ", out.URL)
 	}
 	return nil
@@ -365,8 +359,11 @@ func cmdCA() error {
             Después: Ajustes → General → Información → Ajustes de confianza
             de certificados → activa "Cofre CA".
 
+  Este ordenador (%v), para registrar tu llave en su navegador:
+    %v
+
   Esta CA solo puede firmar certificados para %v: no sirve para espiar otras webs.
-`, info["fingerprint"], info["caPath"], o, info["host"])
+`, info["fingerprint"], info["caPath"], o, platformName, caTrustHint(fmt.Sprint(info["caPath"])), info["host"])
 	return nil
 }
 

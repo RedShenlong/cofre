@@ -10,17 +10,85 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    name: Pruebas · ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
       - name: Formato
+        if: runner.os == 'Linux'
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Vet
         run: go vet ./...
       - name: Pruebas
+        run: go test -count=1 ./...
+      - name: Pruebas con detector de carreras
+        if: runner.os == 'Linux'
         run: go test -race -count=1 ./...
       - name: Compilar
-        run: go build -trimpath -ldflags="-s -w" -o cofre .
+        run: go build -trimpath -ldflags="-s -w" -o cofre-bin .
+
+  install-macos:
+    name: Instalación de prueba · macOS
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Instalar
+        run: ./install-macos.sh
+      - name: Probar
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          cofre estado
+          cofre enviar -t "hola desde la CI"
+          cofre estado | grep "Elementos: 1"
+      - name: Log
+        if: always()
+        run: cat "$HOME/Library/Logs/Cofre/cofre.log" || true
+      - name: Desinstalar
+        run: ./uninstall-macos.sh --purge
+
+  install-windows:
+    name: Instalación de prueba · Windows
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Sintaxis de los scripts de PowerShell
+        shell: powershell
+        run: |
+          foreach ($f in 'install-windows.ps1', 'uninstall-windows.ps1') {
+            $errs = $null
+            [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $f), [ref]$null, [ref]$errs) | Out-Null
+            if ($errs) { $errs; exit 1 }
+          }
+      - name: Instalar
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\install-windows.ps1 -SinConfirmar
+      - name: Probar
+        shell: powershell
+        run: |
+          $env:Path += ";$env:LOCALAPPDATA\Programs\Cofre"
+          cofre estado
+          if ($LASTEXITCODE) { exit 1 }
+          cofre enviar -t "hola desde la CI"
+          if ($LASTEXITCODE) { exit 1 }
+      - name: Log
+        if: always()
+        shell: powershell
+        run: Get-Content "$env:LOCALAPPDATA\Cofre\cofre.log" -ErrorAction SilentlyContinue
+      - name: Desinstalar
+        shell: powershell
+        run: powershell -ExecutionPolicy Bypass -File .\uninstall-windows.ps1 -Purge
