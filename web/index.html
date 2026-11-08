@@ -36,24 +36,34 @@
     </div>
   </section>
 
-  <!-- Primera vez: registrar la llave -->
+  <!-- Registrar la llave (solo desde el portátil, con "cofre registrar") -->
   <section id="screen-enroll" class="screen center" hidden>
     <form id="form-enroll" class="auth-card">
       <img src="/icon.svg" alt="" class="auth-logo">
-      <h1>Bienvenido a tu Cofre</h1>
-      <p class="muted">Registra tu llave de seguridad. Solo se hace una vez.</p>
-      <label class="field">
-        <span>Código de alta</span>
-        <input id="enroll-code" autocomplete="one-time-code" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX" required>
-        <small>Aparece al arrancar el servidor, o genera uno en el portátil con <code>cofre codigo</code>.</small>
-      </label>
+      <h1>Registra tu llave</h1>
+      <p class="muted">Ponle un nombre y tócala cuando te lo pida. Después podrás entrar con ella desde todos tus dispositivos.</p>
       <label class="field">
         <span>Nombre de la llave</span>
         <input id="enroll-name" value="Titan" maxlength="40">
       </label>
-      <button class="btn primary big" type="submit">Registrar llave</button>
+      <button class="btn primary big" type="submit">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 14a4 4 0 1 1 3.87-5H21v4h-2v2h-3v-2h-5.13A4 4 0 0 1 7 14Zm0-2a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+        Registrar llave
+      </button>
       <p id="enroll-error" class="error" role="alert"></p>
     </form>
+  </section>
+
+  <!-- Aún no hay llave y no venimos de "cofre registrar" -->
+  <section id="screen-setup" class="screen center" hidden>
+    <div class="auth-card">
+      <img src="/icon.svg" alt="" class="auth-logo">
+      <h1>Cofre sin llave</h1>
+      <p class="muted">Por seguridad, la llave solo se puede registrar <b>desde el portátil</b>. Abre una terminal en él y ejecuta:</p>
+      <pre class="cmd">cofre registrar</pre>
+      <p class="hint">Se abrirá el navegador del portátil. Tocas la llave y ya podrás entrar con ella desde este dispositivo.</p>
+      <button id="btn-setup-retry" class="btn ghost">Ya lo he hecho</button>
+    </div>
   </section>
 
   <!-- App -->

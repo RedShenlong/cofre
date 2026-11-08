@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"embed"
@@ -19,6 +18,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -45,14 +45,15 @@ type ceremony struct {
 	data    webauthn.SessionData
 	kind    string // "login" | "register"
 	name    string // nombre de la llave nueva
-	byCode  bool   // alta inicial con código
+	byToken bool   // alta con enlace de "cofre registrar"
 	expires time.Time
 }
 
-type enrollCode struct {
-	code     string
-	expires  time.Time
-	attempts int
+// regToken es el secreto de un solo uso que genera "cofre registrar".
+// Solo se guarda su hash y solo vale desde el propio portátil.
+type regToken struct {
+	hash    [32]byte
+	expires time.Time
 }
 
 type Server struct {
@@ -67,7 +68,7 @@ type Server struct {
 
 	mu         sync.Mutex
 	ceremonies map[string]*ceremony
-	enroll     *enrollCode
+	reg        *regToken
 }
 
 type ctxKey int
@@ -149,9 +150,22 @@ func (s *Server) browserHandler() http.Handler {
 // Handler del socket Unix local (solo accesible por tu usuario del portátil).
 func (s *Server) localHandler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /local/code", func(w http.ResponseWriter, r *http.Request) {
-		code, exp := s.newEnrollCode()
-		writeJSON(w, map[string]any{"code": code, "expires": exp, "origin": s.origin})
+	mux.HandleFunc("POST /local/register", func(w http.ResponseWriter, r *http.Request) {
+		tok, exp := s.newRegisterToken()
+		// El secreto va en el fragmento (#): el navegador nunca lo envía en la URL ni en el Referer.
+		writeJSON(w, map[string]any{"url": s.origin + "/#registrar=" + tok, "expires": exp})
+	})
+	mux.HandleFunc("POST /local/reset-keys", func(w http.ResponseWriter, r *http.Request) {
+		var n int
+		s.store.update(func(st *State) error {
+			n = len(st.Creds)
+			st.Creds = nil
+			st.Sessions = nil
+			return nil
+		})
+		log.Printf("llaves reiniciadas desde el portátil: %d llaves y todas las sesiones borradas", n)
+		s.hub.publish("account")
+		writeJSON(w, map[string]int{"keys": n})
 	})
 	mux.HandleFunc("GET /local/info", func(w http.ResponseWriter, r *http.Request) {
 		info := map[string]any{"origin": s.origin, "host": s.host, "items": len(s.store.Items()), "enrolled": s.store.HasCreds()}
@@ -425,46 +439,61 @@ func (s *Server) takeCeremony(w http.ResponseWriter, r *http.Request, kind strin
 	return c, true
 }
 
-const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+const regTokenTTL = 10 * time.Minute
 
-func (s *Server) newEnrollCode() (string, time.Time) {
-	b := make([]byte, 8)
-	rand.Read(b)
-	out := make([]byte, 8)
-	for i, v := range b {
-		out[i] = codeAlphabet[int(v)%len(codeAlphabet)]
-	}
-	code := string(out[:4]) + "-" + string(out[4:])
-	exp := time.Now().Add(15 * time.Minute)
+func (s *Server) newRegisterToken() (string, time.Time) {
+	tok := newToken() // 256 bits aleatorios
+	exp := time.Now().Add(regTokenTTL)
 	s.mu.Lock()
-	s.enroll = &enrollCode{code: string(out), expires: exp}
+	s.reg = &regToken{hash: sha256.Sum256([]byte(tok)), expires: exp}
 	s.mu.Unlock()
-	return code, exp
+	return tok, exp
 }
 
-func (s *Server) checkEnrollCode(input string) bool {
-	norm := strings.Map(func(r rune) rune {
-		r = unicode.ToUpper(r)
-		if strings.ContainsRune(codeAlphabet, r) {
-			return r
-		}
-		return -1
-	}, input)
+// takeRegisterToken comprueba el secreto y lo invalida (un solo uso).
+func (s *Server) takeRegisterToken(tok string) bool {
+	h := sha256.Sum256([]byte(tok))
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	e := s.enroll
-	if e == nil || time.Now().After(e.expires) {
+	if s.reg == nil || time.Now().After(s.reg.expires) {
 		return false
 	}
-	if subtle.ConstantTimeCompare([]byte(norm), []byte(e.code)) == 1 {
-		s.enroll = nil // un solo uso
+	if subtle.ConstantTimeCompare(h[:], s.reg.hash[:]) != 1 {
+		return false
+	}
+	s.reg = nil
+	return true
+}
+
+// fromThisMachine indica si la petición viene del propio portátil
+// (loopback o una de sus propias IPs). Defensa adicional para el alta.
+func fromThisMachine(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return false
+	}
+	// netip entiende las IPv6 con zona (fe80::1%wlan0), que es lo que usa
+	// el propio portátil al resolver su nombre .local por mDNS.
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	ip = ip.WithZone("").Unmap()
+	if ip.IsLoopback() {
 		return true
 	}
-	e.attempts++
-	if e.attempts >= 5 {
-		s.enroll = nil
-		log.Printf("código de alta invalidado tras 5 intentos fallidos")
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Printf("no se pudieron leer las IPs del portátil: %v", err)
 	}
+	for _, a := range addrs {
+		if n, ok := a.(*net.IPNet); ok {
+			if own, ok := netip.AddrFromSlice(n.IP); ok && own.Unmap() == ip {
+				return true
+			}
+		}
+	}
+	log.Printf("registro rechazado: viene de %s, que no es este portátil", host)
 	return false
 }
 
@@ -474,19 +503,23 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enrollBegin(w http.ResponseWriter, r *http.Request) {
-	var req struct{ Code, Name string }
+	var req struct{ Token, Name string }
 	if err := readJSON(w, r, &req); err != nil {
 		httpErr(w, 400, "petición inválida")
 		return
 	}
 	_, authed := s.currentSession(r)
-	byCode := false
+	byToken := false
 	if !authed {
-		if !s.checkEnrollCode(req.Code) {
-			httpErr(w, 403, "código incorrecto o caducado. Genera uno nuevo en el portátil con: cofre codigo")
+		if !fromThisMachine(r) {
+			httpErr(w, 403, "las llaves solo se pueden registrar desde el propio portátil")
 			return
 		}
-		byCode = true
+		if !s.takeRegisterToken(req.Token) {
+			httpErr(w, 403, "enlace de registro no válido o caducado. Genera otro en el portátil con: cofre registrar")
+			return
+		}
+		byToken = true
 	}
 	user := s.store.User()
 	var excl []protocol.CredentialDescriptor
@@ -514,7 +547,7 @@ func (s *Server) enrollBegin(w http.ResponseWriter, r *http.Request) {
 	if len([]rune(name)) > 40 {
 		name = string([]rune(name)[:40])
 	}
-	s.putCeremony(w, &ceremony{data: *data, kind: "register", name: name, byCode: byCode, expires: time.Now().Add(4 * time.Minute)})
+	s.putCeremony(w, &ceremony{data: *data, kind: "register", name: name, byToken: byToken, expires: time.Now().Add(4 * time.Minute)})
 	writeJSON(w, opts)
 }
 
@@ -525,7 +558,7 @@ func (s *Server) enrollFinish(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_, authed := s.currentSession(r)
-	if !authed && !c.byCode {
+	if !authed && !c.byToken {
 		httpErr(w, 401, "sesión no válida")
 		return
 	}

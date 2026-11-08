@@ -94,11 +94,16 @@ type tClient struct {
 	t       *testing.T
 	h       http.Handler
 	cookies map[string]string
+	remote  string // IP de origen ("" = el propio portátil)
 }
 
 func (c *tClient) do(method, path string, body io.Reader, ctype string) (int, []byte, http.Header) {
 	req := httptest.NewRequest(method, "https://"+tHost+":8443"+path, body)
 	req.Host = tHost + ":8443"
+	req.RemoteAddr = "127.0.0.1:40000"
+	if c.remote != "" {
+		req.RemoteAddr = c.remote + ":40000"
+	}
 	if method != "GET" {
 		req.Header.Set("Origin", tOrigin)
 	}
@@ -149,8 +154,18 @@ func TestFullFlowWithSoftKey(t *testing.T) {
 	key := newSoftKey()
 
 	// Alta con código
-	code, _ := s.newEnrollCode()
-	st1, opts := c.json("POST", "/api/enroll/begin", map[string]string{"code": code, "name": "Titan"})
+	// Alguien en la wifi con un token válido (p. ej. robado) NO puede registrar: no es el portátil.
+	stolen, _ := s.newRegisterToken()
+	lan := &tClient{t: t, h: h, cookies: map[string]string{}, remote: "192.0.2.50"}
+	if code, _ := lan.json("POST", "/api/enroll/begin", map[string]string{"token": stolen, "name": "intruso"}); code != 403 {
+		t.Fatalf("registro desde otra IP debería fallar, fue %d", code)
+	}
+	// Desde el propio portátil, con el enlace de "cofre registrar"
+	reg, _ := s.newRegisterToken()
+	if code, _ := c.json("POST", "/api/enroll/begin", map[string]string{"token": "inventado", "name": "x"}); code != 403 {
+		t.Fatal("token inventado aceptado")
+	}
+	st1, opts := c.json("POST", "/api/enroll/begin", map[string]string{"token": reg, "name": "Titan"})
 	if st1 != 200 {
 		t.Fatalf("enroll begin: %d %v", st1, opts)
 	}
@@ -276,6 +291,6 @@ func TestFullFlowWithSoftKey(t *testing.T) {
 	}
 	// Sin sesión y sin código no se puede añadir llave
 	if code, _ := anon.json("POST", "/api/enroll/begin", map[string]string{"name": "x"}); code != 403 {
-		t.Fatal("alta sin código debería fallar")
+		t.Fatal("alta sin token debería fallar")
 	}
 }

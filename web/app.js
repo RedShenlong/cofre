@@ -221,9 +221,9 @@ function ensureWebAuthn() {
   }
 }
 
-async function registerKey(code, name) {
+async function registerKey(token, name) {
   ensureWebAuthn();
-  const opts = await api('POST', '/api/enroll/begin', { code, name });
+  const opts = await api('POST', '/api/enroll/begin', { token, name });
   const pk = opts.publicKey;
   pk.challenge = b64u.dec(pk.challenge);
   pk.user.id = b64u.dec(pk.user.id);
@@ -267,14 +267,23 @@ async function login() {
 /* ============ Pantallas ============ */
 
 function showScreen(name) {
-  for (const s of ['boot', 'login', 'enroll', 'main']) $('#screen-' + s).hidden = s !== name;
+  for (const s of ['boot', 'login', 'enroll', 'setup', 'main']) $('#screen-' + s).hidden = s !== name;
   if (name !== 'main') disconnectEvents();
 }
+
+// Secreto de un solo uso que pone "cofre registrar" en el fragmento de la URL.
+// Lo sacamos y lo borramos de la barra de direcciones (y del historial) al momento.
+const regToken = (() => {
+  const m = location.hash.match(/registrar=([A-Za-z0-9_-]+)/);
+  if (m) history.replaceState(null, '', location.pathname);
+  return m ? m[1] : '';
+})();
 
 async function boot() {
   try {
     const st = await api('GET', '/api/status');
-    if (!st.enrolled) return showScreen('enroll');
+    if (regToken && !st.authed) return showScreen('enroll');
+    if (!st.enrolled) return showScreen('setup');
     if (!st.authed) return showScreen('login');
     enterMain();
   } catch (e) {
@@ -297,21 +306,16 @@ $('#btn-login').addEventListener('click', async () => {
   }
 });
 
+$('#btn-setup-retry').addEventListener('click', boot);
+
 $('#form-enroll').addEventListener('submit', async (ev) => {
   ev.preventDefault();
   $('#enroll-error').textContent = '';
   try {
-    await registerKey($('#enroll-code').value, $('#enroll-name').value);
+    await registerKey(regToken, $('#enroll-name').value);
     toast('Llave registrada ✓');
     enterMain();
   } catch (e) {
-    // ¿Se registró ya la llave desde otro dispositivo? Entonces toca iniciar sesión.
-    const st = await api('GET', '/api/status').catch(() => null);
-    if (st?.enrolled) {
-      showScreen('login');
-      $('#login-error').textContent = 'Tu llave ya está registrada: entra con ella.';
-      return;
-    }
     $('#enroll-error').textContent = webauthnError(e);
   }
 });
@@ -592,7 +596,7 @@ function disconnectEvents() {
 
 // Al volver a la app (móvil bloqueado, cambio de pestaña…) refrescamos.
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible' && !$('#screen-enroll').hidden) { boot(); return; }
+  if (document.visibilityState === 'visible' && !$('#screen-setup').hidden) { boot(); return; }
   if (document.visibilityState !== 'visible' || $('#screen-main').hidden) return;
   loadItems();
   if (!es || es.readyState === EventSource.CLOSED) connectEvents();

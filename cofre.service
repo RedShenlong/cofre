@@ -29,7 +29,8 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+# AF_NETLINK: para conocer las IPs del propio portátil (registro de llaves solo local)
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 UMask=0077
 
 [Install]

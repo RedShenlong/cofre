@@ -158,18 +158,21 @@ Firefox usa su propio almacén: **Ajustes → Privacidad y seguridad → Certifi
 **¿Está bien instalado?** Abre `https://<host>.local:8443`. Si la página carga **sin ningún aviso**,
 el certificado está bien.
 
-### 4. Registrar tu llave
+### 4. Registrar tu llave (desde el portátil)
 
-1. En cualquier dispositivo que ya tenga el certificado, abre `https://<host>.local:8443`.
-2. En el portátil, genera un código de alta de un solo uso:
-   ```bash
-   cofre codigo
-   # Código de alta: K7QM-3XHP
-   ```
-3. Escribe el código, ponle nombre a la llave y tócala.
+Por seguridad, la llave **solo se puede registrar desde el propio portátil**:
 
-Ya estás dentro. A partir de aquí, el resto de dispositivos entran con **"Entrar con mi llave"**.
-Te recomiendo registrar una **llave de repuesto** desde ⚙️ Ajustes.
+```bash
+cofre registrar
+```
+
+Se abre el navegador del portátil. Ponle nombre a la llave, pulsa **Registrar llave** y tócala.
+
+La llave se registra **una vez** y sirve en **todos** tus dispositivos. En el móvil y en la tablet
+solo tienes que tocar **"Entrar con mi llave"**.
+
+> Cofre **no guarda nada dentro de la llave**: no ocupa espacio de passkeys y no toca las que
+> ya tengas. Te recomiendo registrar también una **llave de repuesto** desde ⚙️ Ajustes.
 
 ### 5. Añadirlo a la pantalla de inicio
 
@@ -213,7 +216,8 @@ Se activa y desactiva en ⚙️ Ajustes → Preferencias.
 |---|---|
 | `cofre serve [opciones]` | Arranca el servidor. Normalmente lo lanza systemd. |
 | `cofre enviar ARCHIVO…` / `-t "texto"` / `-` | Sube archivos o texto. |
-| `cofre codigo` | Genera un código de alta (válido 15 min, de un solo uso). |
+| `cofre registrar` | Registra una llave desde el portátil (abre el navegador). |
+| `cofre reiniciar-llaves` | Borra todas las llaves y sesiones, por si pierdes tu llave. Tus archivos se conservan. |
 | `cofre ca` | Muestra el certificado, su huella y cómo instalarlo. |
 | `cofre estado` | Comprueba que el servidor está en marcha. |
 
@@ -244,7 +248,7 @@ Cofre está pensado para que **alguien conectado a tu misma wifi no pueda ver ni
 | Robar la sesión | Cookie `__Host-`, `Secure`, `HttpOnly` y `SameSite=Strict`. En el servidor solo se guarda su hash SHA-256. Las sesiones caducan y se pueden revocar. |
 | CSRF / DNS rebinding | Se comprueban las cabeceras `Origin` y `Host` en cada petición. |
 | XSS / contenido malicioso | La página tiene una CSP estricta (`script-src 'self'`). Los archivos subidos se sirven en *sandbox* o como descarga, con `nosniff`. |
-| Registrar una llave ajena | La primera llave exige un **código de un solo uso** que solo se genera desde el portátil. Caduca a los 15 minutos y se invalida tras 5 intentos fallidos. |
+| Registrar una llave ajena | Las llaves solo se registran **desde el propio portátil**. `cofre registrar` genera un secreto de **256 bits**, de un solo uso y que caduca en 10 minutos. Viaja en el fragmento de la URL (`#`), así que nunca se envía en la dirección ni aparece en el historial. Además, el servidor rechaza cualquier registro que no venga de una IP del propio portátil. Con sesión iniciada se pueden añadir llaves de repuesto desde Ajustes. |
 
 ### En el disco
 
@@ -280,11 +284,21 @@ Cofre está pensado para que **alguien conectado a tu misma wifi no pueda ver ni
 </details>
 
 <details>
-<summary><b>"Código incorrecto o caducado"</b></summary>
+<summary><b>"Las llaves solo se pueden registrar desde el propio portátil" / "Enlace no válido"</b></summary>
 
-El código vale **una sola vez** y durante 15 minutos. Si ya registraste la llave desde otro
-dispositivo, recarga la página: te pedirá **entrar con la llave**, no un código.
-Para generar otro código: `cofre codigo`.
+Ejecuta `cofre registrar` **en el portátil** y usa el navegador que se abre ahí. El enlace vale
+una sola vez y caduca a los 10 minutos. Si se ha caducado, vuelve a ejecutar el comando.
+</details>
+
+<details>
+<summary><b>He perdido mi llave</b></summary>
+
+Si tienes una llave de repuesto registrada, entra con ella y borra la perdida en ⚙️ Ajustes.
+Si no tienes ninguna, ejecuta en el portátil:
+```bash
+cofre reiniciar-llaves   # borra todas las llaves y sesiones; tus archivos se conservan
+cofre registrar          # registra la nueva
+```
 </details>
 
 <details>
@@ -316,7 +330,7 @@ make build    # compila ./cofre
 
 Las pruebas incluyen un **flujo completo con una llave FIDO2 simulada por software**: alta, login,
 subida y descarga. También comprueban que se rechazan las llaves falsas, la reutilización de un
-reto, las sesiones revocadas y los archivos manipulados.
+reto, las sesiones revocadas, los archivos manipulados y los registros desde otra IP de la red.
 
 ```
 .

@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"crypto/rand"
 	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -144,15 +147,48 @@ func TestLinksAndCodes(t *testing.T) {
 	if !s.checkLink("abc", tok) || s.checkLink("abd", tok) || s.checkLink("abc", tok+"x") {
 		t.Fatal("firma de enlaces incorrecta")
 	}
-	code, _ := s.newEnrollCode()
-	for i := 0; i < 5; i++ {
-		s.checkEnrollCode("AAAA-AAAA")
+	reg, _ := s.newRegisterToken()
+	if s.takeRegisterToken(reg+"x") || s.takeRegisterToken("") {
+		t.Fatal("token de registro falso aceptado")
 	}
-	if s.checkEnrollCode(code) {
-		t.Fatal("el código debería invalidarse tras 5 fallos")
+	if !s.takeRegisterToken(reg) || s.takeRegisterToken(reg) {
+		t.Fatal("el token de registro debe valer una sola vez")
 	}
-	code, _ = s.newEnrollCode()
-	if !s.checkEnrollCode(code) || s.checkEnrollCode(code) {
-		t.Fatal("el código debe valer una sola vez")
+	old, _ := s.newRegisterToken()
+	s.newRegisterToken() // generar otro invalida el anterior
+	if s.takeRegisterToken(old) {
+		t.Fatal("un token antiguo no debe valer")
+	}
+}
+
+func TestFromThisMachine(t *testing.T) {
+	req := func(addr string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = addr
+		return r
+	}
+	ok := []string{"127.0.0.1:5000", "[::1]:5000"}
+	// Las IPs reales de este equipo, incluidas las IPv6 con zona (fe80::…%iface).
+	ifaces, _ := net.Interfaces()
+	for _, ifc := range ifaces {
+		addrs, _ := ifc.Addrs()
+		for _, a := range addrs {
+			ip := a.(*net.IPNet).IP
+			if ip.IsLinkLocalUnicast() && ip.To4() == nil {
+				ok = append(ok, "["+ip.String()+"%"+ifc.Name+"]:5000")
+			} else {
+				ok = append(ok, net.JoinHostPort(ip.String(), "5000"))
+			}
+		}
+	}
+	for _, a := range ok {
+		if !fromThisMachine(req(a)) {
+			t.Errorf("%s debería contar como este equipo", a)
+		}
+	}
+	for _, a := range []string{"192.0.2.50:5000", "[fe80::dead:beef%eth9]:5000", "basura"} {
+		if fromThisMachine(req(a)) {
+			t.Errorf("%s NO debería contar como este equipo", a)
+		}
 	}
 }

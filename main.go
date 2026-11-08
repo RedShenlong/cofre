@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -27,7 +28,8 @@ Uso:
   cofre enviar ARCHIVO...     Sube uno o varios archivos al cofre.
   cofre enviar -t "texto"     Sube un texto.
   cofre enviar -              Sube lo que llegue por la entrada estándar como texto.
-  cofre codigo                Genera un código para registrar una llave nueva.
+  cofre registrar             Registra tu llave (abre el navegador del portátil).
+  cofre reiniciar-llaves      Borra todas las llaves y sesiones (si pierdes tu llave).
   cofre ca                    Muestra el certificado a instalar en tus dispositivos.
   cofre estado                Muestra el estado del servidor.
 
@@ -48,8 +50,10 @@ func main() {
 		err = serve(args)
 	case "enviar", "send":
 		err = cmdSend(args)
-	case "codigo", "code":
-		err = cmdCode()
+	case "registrar", "register", "codigo":
+		err = cmdRegister()
+	case "reiniciar-llaves", "reset-keys":
+		err = cmdResetKeys(args)
 	case "ca":
 		err = cmdCA()
 	case "estado", "status":
@@ -178,9 +182,7 @@ func serve(args []string) error {
 	}()
 
 	if !store.HasCreds() {
-		code, _ := srv.newEnrollCode()
-		log.Printf("Aún no hay llaves registradas.")
-		log.Printf("Abre %s y usa el código de alta: %s (válido 15 min; genera otro con: cofre codigo)", srv.origin, code)
+		log.Printf("Aún no hay llaves registradas. En el portátil ejecuta: cofre registrar")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -302,17 +304,40 @@ func localUpload(name string, r io.Reader, size int64, idx, count int) error {
 	return err
 }
 
-func cmdCode() error {
+func cmdRegister() error {
 	var out struct {
-		Code    string
+		URL     string
 		Expires time.Time
-		Origin  string
 	}
-	if err := localDo("POST", "/local/code", nil, &out); err != nil {
+	if err := localDo("POST", "/local/register", nil, &out); err != nil {
 		return err
 	}
-	fmt.Printf("Código de alta: %s\n", out.Code)
-	fmt.Printf("Válido hasta las %s. Ábrelo en %s y toca tu llave.\n", out.Expires.Format("15:04"), out.Origin)
+	fmt.Println("🔑 Abriendo el navegador para registrar tu llave…")
+	fmt.Println("   Escribe un nombre, pulsa \"Registrar llave\" y toca tu llave.")
+	fmt.Printf("   El enlace vale una sola vez y caduca a las %s.\n", out.Expires.Format("15:04"))
+	if exec.Command("xdg-open", out.URL).Start() != nil {
+		fmt.Println("\n   No se pudo abrir el navegador. Abre este enlace EN ESTE PORTÁTIL:")
+		fmt.Println("  ", out.URL)
+	}
+	return nil
+}
+
+func cmdResetKeys(args []string) error {
+	if len(args) == 0 || args[0] != "--si" {
+		fmt.Print("Esto borra TODAS las llaves registradas y cierra todas las sesiones\n" +
+			"(tus archivos no se tocan, y tu llave física tampoco). ¿Seguro? [s/N] ")
+		var ans string
+		fmt.Scanln(&ans)
+		if a := strings.ToLower(strings.TrimSpace(ans)); a != "s" && a != "si" && a != "sí" {
+			fmt.Println("Cancelado.")
+			return nil
+		}
+	}
+	var out struct{ Keys int }
+	if err := localDo("POST", "/local/reset-keys", nil, &out); err != nil {
+		return err
+	}
+	fmt.Printf("✓ %d llave(s) y todas las sesiones borradas. Registra de nuevo con: cofre registrar\n", out.Keys)
 	return nil
 }
 

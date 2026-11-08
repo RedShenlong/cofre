@@ -284,3 +284,9 @@ dialog.sheet::backdrop { background: rgba(10, 10, 20, .45); backdrop-filter: blu
 /* En pantallas estrechas, los botones secundarios se quedan solo con el icono */
 @media (max-width: 440px) { .actions .btn.ghost .lbl { display: none; } }
 dialog :focus:not(:focus-visible) { outline: none; }
+
+.cmd {
+  margin: 0; padding: 12px 14px; border-radius: 12px; text-align: left;
+  background: #111118; color: #c4b5fd; font: 600 1rem ui-monospace, "JetBrains Mono", monospace;
+}
+.cmd::before { content: "$ "; color: #6b6b7b; }
