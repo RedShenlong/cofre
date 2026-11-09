@@ -36,8 +36,6 @@ if ! systemctl --user is-active --quiet cofre.service; then
 fi
 
 HOST="$(hostname | cut -d. -f1 | tr '[:upper:]' '[:lower:]').local"
-IFACE=$(ip route show default 2>/dev/null | awk '{print $5; exit}')
-NET=$(ip route show dev "${IFACE:-x}" scope link proto kernel 2>/dev/null | awk '{print $1; exit}')
 
 cat <<MSG
 
@@ -51,11 +49,12 @@ ${green}${bold}✓ Cofre instalado y en marcha${reset} → https://${HOST}:8443
 
 MSG
 
-if command -v ufw >/dev/null && [ -n "${NET:-}" ]; then
+if command -v ufw >/dev/null; then
   cat <<MSG
-  ${bold}Firewall (ufw):${reset} abre Cofre solo para tu red local (${NET} en ${IFACE}):
-    sudo ufw allow in on ${IFACE} from ${NET} to any port 8443 proto tcp
-    sudo ufw allow in on ${IFACE} from ${NET} to any port 5353 proto udp
+  ${bold}Firewall (ufw):${reset} ábrelo una vez y vale para cualquier wifi.
+  Cofre ya se encarga de aceptar solo la red en la que estés en cada momento:
+    sudo ufw allow 8443/tcp
+    sudo ufw allow 5353/udp
 
 MSG
 fi

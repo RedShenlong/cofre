@@ -128,13 +128,16 @@ El instalador hace esto:
 - Instala y arranca el servicio de usuario `cofre.service`, que arrancará solo cada vez que inicies sesión.
 - Muestra tu dirección (`https://<host>.local:8443`) y las reglas de firewall que necesitas.
 
-**Firewall.** Con `ufw`, abre Cofre **solo para tu red local**. El instalador te imprime estas
-líneas ya rellenadas con tu interfaz y tu subred:
+**Firewall.** Con `ufw`, abre los puertos una sola vez y sirve para cualquier wifi:
 
 ```bash
-sudo ufw allow in on wlan0 from 192.168.1.0/24 to any port 8443 proto tcp   # Cofre
-sudo ufw allow in on wlan0 from 192.168.1.0/24 to any port 5353 proto udp   # mDNS
+sudo ufw allow 8443/tcp   # Cofre
+sudo ufw allow 5353/udp   # mDNS (para encontrar <host>.local)
 ```
+
+No hace falta limitar la subred en el firewall: **Cofre solo acepta conexiones de la red a la
+que estés conectado en ese momento** (más el propio ordenador) y corta cualquier otra antes de
+empezar TLS. Si cambias de wifi, el filtro cambia solo.
 
 **Confía en el certificado en este ordenador**, para registrar tu llave desde su navegador
 (Chrome, Chromium o Brave):
@@ -408,6 +411,8 @@ Cofre está pensado para que **alguien conectado a tu misma wifi no pueda ver ni
 
 - Comprueba que el dispositivo está en la misma wifi y que `systemctl --user status cofre` está activo.
 - Revisa el firewall: hay que abrir el puerto `8443/tcp` y también `5353/udp` (mDNS).
+- Algunas redes públicas (eduroam, hoteles, cafeterías) aíslan a los dispositivos entre sí y
+  no hay forma de saltarlo. Comparte internet desde el móvil y conecta el ordenador a esa red.
 - Comprueba que Avahi publica el nombre: `avahi-resolve -n <host>.local`.
 </details>
 

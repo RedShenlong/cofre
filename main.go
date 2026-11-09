@@ -184,7 +184,13 @@ func serve(args []string) error {
 	errc := make(chan error, 1)
 	go func() {
 		log.Printf("Cofre escuchando en %s", srv.origin)
-		errc <- httpsSrv.ListenAndServeTLS("", "")
+		ln, err := net.Listen("tcp", httpsSrv.Addr)
+		if err != nil {
+			errc <- err
+			return
+		}
+		// Solo acepta conexiones de la red en la que estés ahora (ver lanonly.go).
+		errc <- httpsSrv.ServeTLS(newLANListener(ln), "", "")
 	}()
 	select {
 	case err := <-errc:

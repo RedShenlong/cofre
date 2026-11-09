@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"testing"
@@ -195,6 +196,31 @@ func TestFromThisMachine(t *testing.T) {
 	for _, a := range []string{"192.0.2.50:5000", "[fe80::dead:beef%eth9]:5000", "basura"} {
 		if fromThisMachine(req(a)) {
 			t.Errorf("%s NO debería contar como este equipo", a)
+		}
+	}
+}
+
+func TestLANAllowed(t *testing.T) {
+	pfx := []netip.Prefix{
+		netip.MustParsePrefix("172.20.32.0/19"),
+		netip.MustParsePrefix("2001:db8:1::/64"),
+	}
+	cases := map[string]bool{
+		"127.0.0.1":          true,
+		"::1":                true,
+		"172.20.44.99":       true,
+		"172.20.63.255":      true,
+		"172.20.64.1":        false,
+		"192.168.11.5":       false,
+		"8.8.8.8":            false,
+		"fe80::1%wlan0":      true,
+		"2001:db8:1::abcd":   true,
+		"2001:db8:2::1":      false,
+		"::ffff:172.20.40.1": true,
+	}
+	for s, want := range cases {
+		if got := lanAllowed(netip.MustParseAddr(s), pfx); got != want {
+			t.Errorf("%s: got %v, want %v", s, got, want)
 		}
 	}
 }
